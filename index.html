@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>聊天记录分析器</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        .container { max-width: 900px; margin: 0 auto; padding: 2rem 1rem; }
+        .card { padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #ddd; border-radius: 8px; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
+        .stat-card { text-align: center; padding: 1rem; background: #f5f5f5; border-radius: 8px; }
+        .stat-value { font-size: 2rem; font-weight: bold; }
+        .stat-label { font-size: 0.85rem; color: #666; }
+        .upload-zone { border: 2px dashed #ccc; padding: 2rem; text-align: center; border-radius: 8px; cursor: pointer; margin-bottom: 1rem; }
+        .upload-zone:hover { border-color: #0172ad; }
+        .hidden { display: none; }
+        .topic-tag { display: inline-block; padding: 0.2rem 0.6rem; margin: 0.2rem; background: #0172ad; color: #fff; border-radius: 4px; font-size: 0.8rem; }
+        .topic-bar { height: 24px; background: #0172ad; border-radius: 4px; margin: 4px 0; transition: width 0.5s; }
+        .topic-label { display: flex; justify-content: space-between; margin-bottom: 2px; font-size: 0.9rem; }
+        .msg-row { padding: 0.5rem; border-bottom: 1px solid #eee; display: flex; gap: 0.5rem; }
+        .msg-sender { font-weight: bold; min-width: 60px; color: #0172ad; }
+        .msg-time { color: #999; font-size: 0.8rem; min-width: 140px; }
+        .msg-content { flex: 1; }
+        .sentiment-tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: bold; }
+        .sent-pos { background: #e8f5e9; color: #2e7d32; }
+        .sent-neg { background: #fce4ec; color: #c62828; }
+        .sent-neu { background: #f5f5f5; color: #666; }
+        .tab-buttons { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+        .tab-buttons button { flex: 1; }
+        .active-tab { background: #0172ad !important; color: #fff !important; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header style="text-align:center; margin-bottom:2rem;">
+            <h1>📊 聊天记录分析器</h1>
+            <p>上传微信聊天记录，自动分析话题和情绪趋势（纯本地、不上传数据）</p>
+        </header>
+
+        <!-- 上传 -->
+        <div class="card">
+            <h2>📁 上传聊天记录</h2>
+            <div class="upload-zone" id="drop-zone">
+                <p>拖拽微信 .txt 文件到此处，或点击选择</p>
+                <input type="file" id="file-input" accept=".txt" style="display:block; margin:1rem auto;">
+            </div>
+            <button id="upload-btn" style="width:100%;">上传并分析</button>
+            <p id="upload-status" style="text-align:center; margin-top:1rem;"></p>
+        </div>
+
+        <!-- 统计 -->
+        <div class="card hidden" id="stats-section">
+            <h2>📈 数据概览</h2>
+            <div class="stats" id="stats-cards"></div>
+        </div>
+
+        <!-- 标签页切换 -->
+        <div class="tab-buttons hidden" id="tab-buttons">
+            <button id="tab-topics" class="active-tab">💬 话题分析</button>
+            <button id="tab-sentiment">😊 情绪趋势</button>
+            <button id="tab-activity">📅 活跃度</button>
+            <button id="tab-messages">📝 消息列表</button>
+        </div>
+
+        <!-- 话题分析 -->
+        <div class="card hidden" id="topics-section">
+            <h2>💬 话题分析</h2>
+            <p style="color:#666; font-size:0.85rem;">基于关键词频率自动识别话题</p>
+            <div id="topics-list"></div>
+        </div>
+
+        <!-- 情绪趋势 -->
+        <div class="card hidden" id="sentiment-section">
+            <h2>😊 情绪趋势</h2>
+            <p style="color:#666; font-size:0.85rem;">基于情感词典分析每日情绪变化</p>
+            <canvas id="sentiment-chart" height="200"></canvas>
+            <div id="sentiment-summary" style="margin-top:1rem;"></div>
+        </div>
+
+        <!-- 活跃度 -->
+        <div class="card hidden" id="activity-section">
+            <h2>📅 活跃度分析</h2>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+                <div>
+                    <h4>按小时分布</h4>
+                    <canvas id="hourly-chart" height="200"></canvas>
+                </div>
+                <div>
+                    <h4>按天分布</h4>
+                    <canvas id="daily-chart" height="200"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 消息列表 -->
+        <div class="card hidden" id="messages-section">
+            <h2>📝 消息列表</h2>
+            <div style="margin-bottom:1rem;">
+                <label>筛选发送者：
+                    <select id="sender-filter" style="width:auto; display:inline;">
+                        <option value="">全部</option>
+                    </select>
+                </label>
+                <label style="margin-left:1rem;">搜索：
+                    <input type="text" id="msg-search" placeholder="输入关键词..." style="width:200px; display:inline;">
+                </label>
+            </div>
+            <div id="messages-list" style="max-height:500px; overflow-y:auto;"></div>
+        </div>
+    </div>
+
+    <script>
+        // ========== 全局变量 ==========
+        var parsedMessages = [];
+        var allSenders = [];
+
+        // ========== 情感词典 ==========
+        var POSITIVE_WORDS = [
+            '好', '棒', '赞', '谢谢', '感谢', '开心', '高兴', '喜欢', '爱', '优秀', '厉害', '完美',
+            '不错', '太好了', '哈哈', '嘻嘻', '嘿嘿', '愉快', '成功', '通过', '完成', '搞定',
+            'nice', 'good', 'great', '同意', '支持', '可以', '没问题', '好的', 'ok', 'OK',
+            '快乐', '幸福', '满意', '舒服', '激动', '期待', '加油', '恭喜', '庆祝',
+            '👍', '😊', '😂', '😄', '🎉', '✅', '❤️'
+        ];
+
+        var NEGATIVE_WORDS = [
+            '不好', '差', '糟糕', '失败', '错误', '问题', 'bug', 'BUG', '不行', '没办法',
+            '烦', '累', '困', '难过', '伤心', '生气', '愤怒', '讨厌', '恨', '焦虑',
+            '担心', '害怕', '紧张', '压力', '崩溃', '无语', '唉', '算了', '放弃',
+            '延期', '推迟', '来不及', '赶不上', '改不了', '做不了', '没办法',
+            '😡', '😢', '😭', '😤', '💔', '👎', '❌'
+        ];
+
+        // ========== 话题关键词词典 ==========
+        var TOPIC_DICT = {
+            '版本发布': ['发版', '发布', '上线', '部署', '版本', 'release', '灰度', '回滚'],
+            '测试': ['测试', 'test', 'bug', 'BUG', '缺陷', '用例', '验收', '回归', '压测'],
+            '需求讨论': ['需求', 'prd', 'PRD', '产品', '功能', '方案', '设计', '交互', 'UI'],
+            '技术讨论': ['架构', '代码', 'code', '接口', 'API', '数据库', 'sql', 'SQL', '重构', '优化', '性能'],
+            '时间协调': ['时间', '排期', '进度', 'deadline', 'ddl', '下周', '下周五', '周三', '周四', '延期', '推迟'],
+            '团队沟通': ['开会', '会议', '周报', '日报', '沟通', '对齐', '同步', '确认', 'review'],
+            '问题排查': ['报错', '异常', '挂了', '超时', '502', '500', '404', '日志', '排查', '定位'],
+            '学习分享': ['学习', '分享', '文章', '博客', '推荐', '资料', '教程', '文档'],
+        };
+
+        var STOP_WORDS = ['的', '了', '在', '是', '我', '你', '他', '她', '它', '们', '这', '那', '吗', '呢', '吧', '啊', '哦', '嗯', '和', '与', '或', '但', '也', '就', '都', '很', '要', '会', '可以', '一个', '这个', '那个', '什么', '怎么', '为什么', '因为', '所以', '如果', '虽然', '但是', '然后', '之后', '之前', '已经', '还', '没', '有', '不', '对', '说', '想', '做', '去', '来', '到', '看', '让', '给', '把', '被', '从', '用', '里', '上', '下', '中', '前', '后', '时', '现在', '今天', '明天', '昨天', '等', '觉得', '知道', '应该', '可能', '比较', '非常', '真的', '点', '个', '次', '些', '多', '少', '好', '大', '小'];
+
+        // ========== 微信解析器 ==========
+        function parseWechat(text) {
+            var messages = [];
+            var lines = text.split('\n');
+            var pattern = /^(\d{4}[-/]\d{1,2}[-/]\d{1,2})\s+(\d{1,2}:\d{2}:\d{2})\s+([^:]+?):\s*(.+)$/;
+            var systemKeywords = /撤回了一条消息|加入了群聊|退出了群聊|修改群名为|被移出群聊|你邀请|拍了拍|发起了群|修改了群公告|开启了朋友验证|关闭了朋友验证|以上是打招呼|通过了你的好友请求|发送了一条消息|你已添加了|发起了语音|发起了视频/;
+
+            for (var i = 0; i < lines.length; i++) {
+                var line = lines[i].trim();
+                if (!line) continue;
+
+                var match = line.match(pattern);
+                if (!match) continue;
+
+                var dateStr = match[1];
+                var timeStr = match[2];
+                var sender = match[3].trim();
+                var content = match[4].trim();
+
+                if (systemKeywords.test(content) || sender === '系统') continue;
+
+                var dt = new Date(dateStr.replace(/\//g, '-') + 'T' + timeStr + '+08:00');
+                var timestamp = dt.getTime();
+                if (isNaN(timestamp)) continue;
+
+                var contentType = 'text';
+                if (content === '[图片]') contentType = 'image';
+                else if (content === '[文件]') contentType = 'file';
+
+                // 情绪分析
+                var sentiment = analyzeSentiment(content);
+
+                messages.push({
+                    id: 'msg_' + i,
+                    sender_name: sender,
+                    timestamp: timestamp,
+                    date: dateStr.replace(/\//g, '-'),
+                    hour: parseInt(timeStr.split(':')[0]),
+                    dayOfWeek: dt.getDay(),
+                    content_type: contentType,
+                    text_content: content,
+                    sentiment: sentiment
+                });
+            }
+
+            return messages;
+        }
+
+        // ========== 情绪分析（规则） ==========
+        function analyzeSentiment(text) {
+            var posCount = 0;
+            var negCount = 0;
+
+            for (var i = 0; i < POSITIVE_WORDS.length; i++) {
+                if (text.indexOf(POSITIVE_WORDS[i]) !== -1) posCount++;
+            }
+            for (var i = 0; i < NEGATIVE_WORDS.length; i++) {
+                if (text.indexOf(NEGATIVE_WORDS[i]) !== -1) negCount++;
+            }
+
+            if (posCount > negCount) return { label: '正面', score: Math.min(1, posCount / 3), cls: 'sent-pos' };
+            if (negCount > posCount) return { label: '负面', score: Math.max(-1, -negCount / 3), cls: 'sent-neg' };
+            return { label: '中性', score: 0, cls: 'sent-neu' };
+        }
+
+        // ========== 话题分析（规则） ==========
+        function analyzeTopics(messages) {
+            var results = {};
+
+            // 方法1：关键词匹配
+            var topicKeys = Object.keys(TOPIC_DICT);
+            for (var i = 0; i < topicKeys.length; i++) {
+                var topic = topicKeys[i];
+                var keywords = TOPIC_DICT[topic];
+                var count = 0;
+                for (var j = 0; j < messages.length; j++) {
+                    var content = messages[j].text_content;
+                    for (var k = 0; k < keywords.length; k++) {
+                        if (content.indexOf(keywords[k]) !== -1) {
+                            count++;
+                            break;
+                        }
+                    }
+                }
+                if (count > 0) {
+                    results[topic] = count;
+                }
+            }
+
+            // 方法2：词频统计（分词近似）
+            var wordFreq = {};
+            for (var i = 0; i < messages.length; i++) {
+                var words = segmentWords(messages[i].text_content);
+                for (var j = 0; j < words.length; j++) {
+                    var w = words[j];
+                    if (w.length < 2) continue;
+                    if (STOP_WORDS.indexOf(w) !== -1) continue;
+                    wordFreq[w] = (wordFreq[w] || 0) + 1;
+                }
+            }
+
+            // 取高频词
+            var freqList = [];
+            var wordKeys = Object.keys(wordFreq);
+            for (var i = 0; i < wordKeys.length; i++) {
+                freqList.push({ word: wordKeys[i], count: wordFreq[wordKeys[i]] });
+            }
+            freqList.sort(function(a, b) { return b.count - a.count; });
+            var topWords = freqList.slice(0, 20);
+
+            // 排序话题
+            var topicList = [];
+            var tk = Object.keys(results);
+            for (var i = 0; i < tk.length; i++) {
+                topicList.push({ name: tk[i], count: results[tk[i]] });
+            }
+            topicList.sort(function(a, b) { return b.count - a.count; });
+
+            return { topics: topicList.slice(0, 6), topWords: topWords };
+        }
+
+        // ========== 简单分词 ==========
+        function segmentWords(text) {
+            // 基于标点和常见词边界切分
+            var cleaned = text.replace(/[，。！？、：；""''（）【】《》\s\[\]{}()!"#$%&'*+,./:;<=>?@\\^_`{|}~]/g, ' ');
+            var parts = cleaned.split(/\s+/);
+            var words = [];
+            for (var i = 0; i < parts.length; i++) {
+                var p = parts[i].trim();
+                if (!p) continue;
+                // 尝试 2-4 字分词
+                for (var len = 4; len >= 2; len--) {
+                    for (var j = 0; j + len <= p.length; j++) {
+                        words.push(p.substring(j, j + len));
+                    }
+                }
+            }
+            return words;
+        }
+
+        // ========== 活跃度分析 ==========
+        function analyzeActivity(messages) {
+            var hourly = new Array(24).fill(0);
+            var daily = new Array(7).fill(0);
+            var dayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+            for (var i = 0; i < messages.length; i++) {
+                hourly[messages[i].hour]++;
+                daily[messages[i].dayOfWeek]++;
+            }
+
+            return { hourly: hourly, daily: daily, dayNames: dayNames };
+        }
+
+        // ========== 每日情绪统计 ==========
+        function analyzeDailySentiment(messages) {
+            var dailyData = {};
+            for (var i = 0; i < messages.length; i++) {
+                var date = messages[i].date;
+                if (!dailyData[date]) {
+                    dailyData[date] = { scores: [], labels: [] };
+                }
+                dailyData[date].scores.push(messages[i].sentiment.score);
+                dailyData[date].labels.push(messages[i].sentiment.label);
+            }
+
+            var dates = Object.keys(dailyData).sort();
+            var result = [];
+            for (var i = 0; i < dates.length; i++) {
+                var d = dates[i];
+                var scores = dailyData[d].scores;
+                var avg = scores.reduce(function(a, b) { return a + b; }, 0) / scores.length;
+
+                // 统计标签
+                var labelCounts = { '正面': 0, '负面': 0, '中性': 0 };
+                for (var j = 0; j < dailyData[d].labels.length; j++) {
+                    labelCounts[dailyData[d].labels[j]]++;
+                }
+                var dominant = '中性';
+                if (labelCounts['正面'] > labelCounts['负面'] && labelCounts['正面'] > labelCounts['中性']) dominant = '正面';
+                if (labelCounts['负面'] > labelCounts['正面'] && labelCounts['负面'] > labelCounts['中性']) dominant = '负面';
+
+                result.push({ date: d, score: Math.round(avg * 100) / 100, label: dominant, count: scores.length });
+            }
+            return result;
+        }
+
+        // ========== 上传处理 ==========
+        document.getElementById('upload-btn').onclick = function() {
+            var fileInput = document.getElementById('file-input');
+            var file = fileInput.files[0];
+            if (!file) {
+                document.getElementById('upload-status').textContent = '请先选择文件';
+                return;
+            }
+
+            document.getElementById('upload-status').textContent = '正在解析...';
+
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                var text = e.target.result;
+                parsedMessages = parseWechat(text);
+
+                if (parsedMessages.length === 0) {
+                    document.getElementById('upload-status').textContent = '未能解析出消息，请检查文件格式';
+                    return;
+                }
+
+                // 统计
+                var senders = {};
+                for (var i = 0; i < parsedMessages.length; i++) {
+                    var name = parsedMessages[i].sender_name;
+                    if (!senders[name]) senders[name] = 0;
+                    senders[name]++;
+                }
+                allSenders = Object.keys(senders).sort(function(a, b) { return senders[b] - senders[a]; });
+                var timeSpan = '';
+                if (parsedMessages.length > 0) {
+                    var first = new Date(parsedMessages[0].timestamp);
+                    var last = new Date(parsedMessages[parsedMessages.length - 1].timestamp);
+                    timeSpan = first.toLocaleDateString('zh-CN') + ' ~ ' + last.toLocaleDateString('zh-CN');
+                }
+
+                document.getElementById('upload-status').textContent = '✅ 解析完成';
+                document.getElementById('stats-section').classList.remove('hidden');
+                document.getElementById('stats-cards').innerHTML =
+                    '<div class="stat-card"><div class="stat-value">' + parsedMessages.length + '</div><div class="stat-label">消息总数</div></div>' +
+                    '<div class="stat-card"><div class="stat-value">' + allSenders.length + '</div><div class="stat-label">参与者</div></div>' +
+                    '<div class="stat-card"><div class="stat-value" style="font-size:0.9rem;">' + timeSpan + '</div><div class="stat-label">时间跨度</div></div>';
+
+                // 分析
+                showTopics();
+                showSentiment();
+                showActivity();
+                showMessages();
+
+                document.getElementById('tab-buttons').classList.remove('hidden');
+                switchTab('topics');
+            };
+            reader.readAsText(file, 'UTF-8');
+        };
+
+        // 拖拽
+        var dropZone = document.getElementById('drop-zone');
+        dropZone.addEventListener('dragover', function(e) { e.preventDefault(); });
+        dropZone.addEventListener('drop', function(e) {
+            e.preventDefault();
+            if (e.dataTransfer.files.length > 0) {
+                document.getElementById('file-input').files = e.dataTransfer.files;
+            }
+        });
+
+        // ========== 标签页切换 ==========
+        function switchTab(tab) {
+            var tabs = ['topics', 'sentiment', 'activity', 'messages'];
+            for (var i = 0; i < tabs.length; i++) {
+                var btn = document.getElementById('tab-' + tabs[i]);
+                var section = document.getElementById(tabs[i] + '-section');
+                if (tabs[i] === tab) {
+                    btn.classList.add('active-tab');
+                    section.classList.remove('hidden');
+                } else {
+                    btn.classList.remove('active-tab');
+                    section.classList.add('hidden');
+                }
+            }
+        }
+
+        document.getElementById('tab-topics').onclick = function() { switchTab('topics'); };
+        document.getElementById('tab-sentiment').onclick = function() { switchTab('sentiment'); };
+        document.getElementById('tab-activity').onclick = function() { switchTab('activity'); };
+        document.getElementById('tab-messages').onclick = function() { switchTab('messages'); };
+
+        // ========== 话题展示 ==========
+        function showTopics() {
+            var result = analyzeTopics(parsedMessages);
+            var topics = result.topics;
+            var topWords = result.topWords;
+            var maxCount = topics.length > 0 ? topics[0].count : 1;
+
+            var html = '<h4>话题分布</h4>';
+            if (topics.length === 0) {
+                html += '<p style="color:#999;">未检测到明显话题</p>';
+            } else {
+                for (var i = 0; i < topics.length; i++) {
+                    var pct = Math.round(topics[i].count / maxCount * 100);
+                    html += '<div class="topic-label"><span>' + topics[i].name + '</span><span>' + topics[i].count + ' 条</span></div>';
+                    html += '<div class="topic-bar" style="width:' + pct + '%;"></div>';
+                }
+            }
+
+            html += '<h4 style="margin-top:1.5rem;">高频关键词</h4><div>';
+            for (var i = 0; i < Math.min(topWords.length, 20); i++) {
+                html += '<span class="topic-tag">' + topWords[i].word + ' (' + topWords[i].count + ')</span>';
+            }
+            html += '</div>';
+
+            document.getElementById('topics-list').innerHTML = html;
+            document.getElementById('topics-section').classList.remove('hidden');
+        }
+
+        // ========== 情绪展示 ==========
+        function showSentiment() {
+            var dailyData = analyzeDailySentiment(parsedMessages);
+
+            var canvas = document.getElementById('sentiment-chart');
+            var existing = Chart.getChart(canvas);
+            if (existing) existing.destroy();
+
+            var colors = dailyData.map(function(d) {
+                if (d.score > 0) return '#4CAF50';
+                if (d.score < 0) return '#f44336';
+                return '#9e9e9e';
+            });
+
+            new Chart(canvas.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: dailyData.map(function(d) { return d.date; }),
+                    datasets: [{
+                        label: '每日情绪均值',
+                        data: dailyData.map(function(d) { return d.score; }),
+                        backgroundColor: colors,
+                        borderColor: colors,
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: function(ctx) {
+                                    var d = dailyData[ctx.dataIndex];
+                                    return '情绪: ' + d.label + ' (' + d.score + ') | ' + d.count + '条消息';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: { min: -1, max: 1 }
+                    }
+                }
+            });
+
+            // 情绪摘要
+            var totalPos = 0, totalNeg = 0, totalNeu = 0;
+            for (var i = 0; i < parsedMessages.length; i++) {
+                var l = parsedMessages[i].sentiment.label;
+                if (l === '正面') totalPos++;
+                else if (l === '负面') totalNeg++;
+                else totalNeu++;
+            }
+            var total = parsedMessages.length;
+            document.getElementById('sentiment-summary').innerHTML =
+                '<div class="stats">' +
+                '<div class="stat-card"><div class="stat-value" style="color:#2e7d32;">' + Math.round(totalPos/total*100) + '%</div><div class="stat-label">正面消息</div></div>' +
+                '<div class="stat-card"><div class="stat-value" style="color:#999;">' + Math.round(totalNeu/total*100) + '%</div><div class="stat-label">中性消息</div></div>' +
+                '<div class="stat-card"><div class="stat-value" style="color:#c62828;">' + Math.round(totalNeg/total*100) + '%</div><div class="stat-label">负面消息</div></div>' +
+                '</div>';
+
+            document.getElementById('sentiment-section').classList.remove('hidden');
+        }
+
+        // ========== 活跃度展示 ==========
+        function showActivity() {
+            var activity = analyzeActivity(parsedMessages);
+
+            var canvas1 = document.getElementById('hourly-chart');
+            var existing1 = Chart.getChart(canvas1);
+            if (existing1) existing1.destroy();
+
+            new Chart(canvas1.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: ['0时','1时','2时','3时','4时','5时','6时','7时','8时','9时','10时','11时','12时','13时','14时','15时','16时','17时','18时','19时','20时','21时','22时','23时'],
+                    datasets: [{
+                        label: '消息数',
+                        data: activity.hourly,
+                        backgroundColor: '#0172ad',
+                    }]
+                },
+                options: { responsive: true }
+            });
+
+            var canvas2 = document.getElementById('daily-chart');
+            var existing2 = Chart.getChart(canvas2);
+            if (existing2) existing2.destroy();
+
+            var dayColors = ['#f44336','#FF9800','#FFC107','#4CAF50','#2196F3','#9C27B0','#607D8B'];
+            new Chart(canvas2.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: activity.dayNames,
+                    datasets: [{
+                        label: '消息数',
+                        data: activity.daily,
+                        backgroundColor: dayColors,
+                    }]
+                },
+                options: { responsive: true }
+            });
+
+            document.getElementById('activity-section').classList.remove('hidden');
+        }
+
+        // ========== 消息列表展示 ==========
+        function showMessages() {
+            // 填充发送者筛选
+            var select = document.getElementById('sender-filter');
+            select.innerHTML = '<option value="">全部</option>';
+            for (var i = 0; i < allSenders.length; i++) {
+                select.innerHTML += '<option value="' + allSenders[i] + '">' + allSenders[i] + '</option>';
+            }
+
+            renderMessages();
+            document.getElementById('messages-section').classList.remove('hidden');
+
+            // 筛选事件
+            document.getElementById('sender-filter').onchange = renderMessages;
+            document.getElementById('msg-search').oninput = renderMessages;
+        }
+
+        function renderMessages() {
+            var filterSender = document.getElementById('sender-filter').value;
+            var searchText = document.getElementById('msg-search').value.toLowerCase();
+
+            var html = '';
+            var count = 0;
+            for (var i = parsedMessages.length - 1; i >= 0; i--) {
+                var m = parsedMessages[i];
+                if (filterSender && m.sender_name !== filterSender) continue;
+                if (searchText && m.text_content.toLowerCase().indexOf(searchText) === -1) continue;
+
+                var date = new Date(m.timestamp);
+                var timeStr = date.toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+                var dateStr = date.toLocaleDateString('zh-CN');
+
+                html += '<div class="msg-row">' +
+                    '<span class="msg-time">' + dateStr + ' ' + timeStr + '</span>' +
+                    '<span class="msg-sender">' + m.sender_name + '</span>' +
+                    '<span class="msg-content">' + escapeHtml(m.text_content) + '</span>' +
+                    '<span class="sentiment-tag ' + m.sentiment.cls + '">' + m.sentiment.label + '</span>' +
+                    '</div>';
+                count++;
+                if (count >= 200) break;
+            }
+
+            if (html === '') {
+                html = '<p style="color:#999; text-align:center;">没有匹配的消息</p>';
+            } else {
+                html = '<p style="color:#999; font-size:0.85rem;">显示 ' + count + ' 条消息</p>' + html;
+            }
+
+            document.getElementById('messages-list').innerHTML = html;
+        }
+
+        function escapeHtml(text) {
+            var div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
