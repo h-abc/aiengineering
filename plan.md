@@ -16,3 +16,12 @@
 | 话题词典替代 LLM 话题聚类 | 8 个话题类别 + 关键词匹配 |
 
 ## 文件结构
+aiengineering/
+├── index.html              # 唯一源码文件
+├── README.md
+├── SPEC.md
+├── PLAN.md
+├── SPEC_PROCESS.md
+├── AGENT_LOG.md
+├── REFLECTION.md
+└── .github/workflows/ci.yml
